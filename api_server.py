@@ -27,7 +27,8 @@ CORS(app, resources={
 })
 
 # Configuration
-MODEL_PATH = r"C:\Users\sanka\runs\detect\train3\weights\best.pt"
+# Use environment variable for model path (works for local and cloud deployment)
+MODEL_PATH = os.getenv('MODEL_PATH', 'best.pt')
 UPLOAD_FOLDER = 'api_uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'bmp', 'tiff'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -36,9 +37,24 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Initialize OMR Processor (loaded once at startup)
-print("Loading OMR model...")
-processor = OMRProcessor(MODEL_PATH)
-print("Model loaded successfully!")
+print("="*60)
+print("Initializing OMR Processing API...")
+print(f"Model path: {MODEL_PATH}")
+print(f"Model exists: {os.path.exists(MODEL_PATH)}")
+print("="*60)
+
+if not os.path.exists(MODEL_PATH):
+    print(f"⚠️  WARNING: Model file not found at {MODEL_PATH}")
+    print("Please ensure model weights are available.")
+    processor = None
+else:
+    try:
+        print("Loading OMR model...")
+        processor = OMRProcessor(MODEL_PATH)
+        print("✅ Model loaded successfully!")
+    except Exception as e:
+        print(f"❌ Error loading model: {e}")
+        processor = None
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -63,11 +79,13 @@ def decode_base64_image(base64_string):
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint - verify API is running."""
+    model_loaded = processor is not None and processor.model is not None if processor else False
     return jsonify({
-        'status': 'healthy',
-        'model_loaded': processor.model is not None,
+        'status': 'healthy' if model_loaded else 'degraded',
+        'model_loaded': model_loaded,
         'service': 'OMR Processing API',
-        'version': '1.0.0'
+        'version': '1.0.0',
+        'model_path': MODEL_PATH
     }), 200
 
 
@@ -83,6 +101,13 @@ def process_omr():
     Returns:
     - JSON with extracted data
     """
+    
+    # Check if processor is loaded
+    if processor is None:
+        return jsonify({
+            'error': 'Model not loaded',
+            'message': 'OMR processor is not available. Please check server logs.'
+        }), 503
     
     # Check if request has file or base64 image
     if 'file' in request.files:
@@ -349,12 +374,16 @@ def internal_error(error):
 # ============================================================
 
 if __name__ == '__main__':
+    # Get port from environment variable (Render, Heroku, etc.) or default to 5000
+    port = int(os.getenv('PORT', 5000))
+    
     print("\n" + "="*60)
     print("🚀 OMR PROCESSING API SERVER")
     print("="*60)
     print(f"📂 Model: {MODEL_PATH}")
-    print(f"🌐 API URL: http://localhost:5000")
+    print(f"🌐 Port: {port}")
     print(f"📡 CORS: Enabled (allows website integration)")
+    print(f"🔧 Model loaded: {'✅ Yes' if processor else '❌ No'}")
     print("\n📚 Available Endpoints:")
     print("  • POST /api/process     - Process single OMR")
     print("  • POST /api/batch       - Process multiple OMRs")
@@ -364,9 +393,7 @@ if __name__ == '__main__':
     print("="*60 + "\n")
     
     # Run server
-    # For development
-    # app.run(debug=True, host='0.0.0.0', port=5000)
-    
-    # For production (use with gunicorn)
-    app.run(host='0.0.0.0', port=5000)
+    # Note: Use gunicorn in production (Render, AWS, etc.)
+    #       This is for local development only
+    app.run(host='0.0.0.0', port=port)
 
